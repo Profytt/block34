@@ -1,9 +1,24 @@
-const { Client } = require('pg') // imports the pg module
+const { Pool } = require('pg') // imports the pg module
 
-const client = new Client({
+const pool = new Pool({
   connectionString: process.env.DATABASE_URL || 'postgres://localhost:5432/juicebox-dev',
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
 });
+
+async function connectToDatabase(app, PORT) {
+  try {
+      await pool.connect();
+      console.log('Connected to the database');
+
+      // Now that we're connected, start the server
+      app.listen(PORT, () => {
+          console.log("The server is up on port", PORT);
+      });
+  } catch (err) {
+      console.error('Database connection failed!', err);
+      process.exit(1); 
+  }
+}
 
 /**
  * USER Methods
@@ -16,9 +31,9 @@ async function createUser({
   location
 }) {
   try {
-    const { rows: [ user ] } = await client.query(`
-      INSERT INTO users(username, password, name) 
-      VALUES($1, $2, $3) 
+    const { rows: [ user ] } = await pool.query(`
+      INSERT INTO users(username, password, name, location) 
+      VALUES($1, $2, $3, $4) 
       ON CONFLICT (username) DO NOTHING 
       RETURNING *;
     `, [username, password, name, location]);
@@ -41,7 +56,7 @@ async function updateUser(id, fields = {}) {
   }
 
   try {
-    const { rows: [ user ] } = await client.query(`
+    const { rows: [ user ] } = await pool.query(`
       UPDATE users
       SET ${ setString }
       WHERE id=${ id }
@@ -56,7 +71,7 @@ async function updateUser(id, fields = {}) {
 
 async function getAllUsers() {
   try {
-    const { rows } = await client.query(`
+    const { rows } = await pool.query(`
       SELECT id, username, name, location, active 
       FROM users;
     `);
@@ -69,7 +84,7 @@ async function getAllUsers() {
 
 async function getUserById(userId) {
   try {
-    const { rows: [ user ] } = await client.query(`
+    const { rows: [ user ] } = await pool.query(`
       SELECT id, username, name, location, active
       FROM users
       WHERE id=${ userId }
@@ -92,7 +107,7 @@ async function getUserById(userId) {
 
 async function getUserByUsername(username) {
   try {
-    const { rows: [ user ] } = await client.query(`
+    const { rows: [ user ] } = await pool.query(`
       SELECT *
       FROM users
       WHERE username=$1
@@ -122,7 +137,7 @@ async function createPost({
   tags = []
 }) {
   try {
-    const { rows: [ post ] } = await client.query(`
+    const { rows: [ post ] } = await pool.query(`
       INSERT INTO posts("authorId", title, content) 
       VALUES($1, $2, $3)
       RETURNING *;
@@ -149,7 +164,7 @@ async function updatePost(postId, fields = {}) {
   try {
     // update any fields that need to be updated
     if (setString.length > 0) {
-      await client.query(`
+      await pool.query(`
         UPDATE posts
         SET ${ setString }
         WHERE id=${ postId }
@@ -169,7 +184,7 @@ async function updatePost(postId, fields = {}) {
     ).join(', ');
 
     // delete any post_tags from the database which aren't in that tagList
-    await client.query(`
+    await pool.query(`
       DELETE FROM post_tags
       WHERE "tagId"
       NOT IN (${ tagListIdString })
@@ -187,7 +202,7 @@ async function updatePost(postId, fields = {}) {
 
 async function getAllPosts() {
   try {
-    const { rows: postIds } = await client.query(`
+    const { rows: postIds } = await pool.query(`
       SELECT id
       FROM posts;
     `);
@@ -204,7 +219,7 @@ async function getAllPosts() {
 
 async function getPostById(postId) {
   try {
-    const { rows: [ post ]  } = await client.query(`
+    const { rows: [ post ]  } = await pool.query(`
       SELECT *
       FROM posts
       WHERE id=$1;
@@ -217,14 +232,14 @@ async function getPostById(postId) {
       };
     }
 
-    const { rows: tags } = await client.query(`
+    const { rows: tags } = await pool.query(`
       SELECT tags.*
       FROM tags
       JOIN post_tags ON tags.id=post_tags."tagId"
       WHERE post_tags."postId"=$1;
     `, [postId])
 
-    const { rows: [author] } = await client.query(`
+    const { rows: [author] } = await pool.query(`
       SELECT id, username, name, location
       FROM users
       WHERE id=$1;
@@ -243,11 +258,12 @@ async function getPostById(postId) {
 
 async function getPostsByUser(userId) {
   try {
-    const { rows: postIds } = await client.query(`
+    const { rows: postIds } = await pool.query(`
       SELECT id 
       FROM posts 
-      WHERE "authorId"=${ userId };
-    `);
+      WHERE "authorId" = $1; 
+      
+    `, [userId]);
 
     const posts = await Promise.all(postIds.map(
       post => getPostById( post.id )
@@ -261,7 +277,7 @@ async function getPostsByUser(userId) {
 
 async function getPostsByTagName(tagName) {
   try {
-    const { rows: postIds } = await client.query(`
+    const { rows: postIds } = await pool.query(`
       SELECT posts.id
       FROM posts
       JOIN post_tags ON posts.id=post_tags."postId"
@@ -296,14 +312,14 @@ async function createTags(tagList) {
 
   try {
     // insert all, ignoring duplicates
-    await client.query(`
+    await pool.query(`
       INSERT INTO tags(name)
       VALUES (${ valuesStringInsert })
       ON CONFLICT (name) DO NOTHING;
     `, tagList);
 
     // grab all and return
-    const { rows } = await client.query(`
+    const { rows } = await pool.query(`
       SELECT * FROM tags
       WHERE name
       IN (${ valuesStringSelect });
@@ -317,7 +333,7 @@ async function createTags(tagList) {
 
 async function createPostTag(postId, tagId) {
   try {
-    await client.query(`
+    await pool.query(`
       INSERT INTO post_tags("postId", "tagId")
       VALUES ($1, $2)
       ON CONFLICT ("postId", "tagId") DO NOTHING;
@@ -343,7 +359,7 @@ async function addTagsToPost(postId, tagList) {
 
 async function getAllTags() {
   try {
-    const { rows } = await client.query(`
+    const { rows } = await pool.query(`
       SELECT * 
       FROM tags;
     `);
@@ -355,7 +371,10 @@ async function getAllTags() {
 }
 
 module.exports = {  
-  client,
+  pool,
+  query: (text, params, callback) => {
+        return pool.query(text, params, callback)
+    },
   createUser,
   updateUser,
   getAllUsers,

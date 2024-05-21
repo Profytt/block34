@@ -8,7 +8,9 @@ const {
   updatePost,
   getAllPosts,
   getAllTags,
-  getPostsByTagName
+  getPostsByTagName,
+  query,
+  pool
 } = require('./index');
 
 async function dropTables() {
@@ -16,7 +18,7 @@ async function dropTables() {
     console.log("Starting to drop tables...");
 
     // have to make sure to drop in correct order
-    await client.query(`
+    await pool.query(`
       DROP TABLE IF EXISTS post_tags;
       DROP TABLE IF EXISTS tags;
       DROP TABLE IF EXISTS posts;
@@ -34,7 +36,7 @@ async function createTables() {
   try {
     console.log("Starting to build tables...");
 
-    await client.query(`
+    await pool.query(`
       CREATE TABLE users (
         id SERIAL PRIMARY KEY,
         username varchar(255) UNIQUE NOT NULL,
@@ -135,7 +137,7 @@ async function createInitialPosts() {
 
 async function rebuildDB() {
   try {
-    client.connect();
+    
 
     await dropTables();
     await createTables();
@@ -202,4 +204,6 @@ async function testDB() {
 rebuildDB()
   .then(testDB)
   .catch(console.error)
-  .finally(() => client.end());
+ 
+
+  
